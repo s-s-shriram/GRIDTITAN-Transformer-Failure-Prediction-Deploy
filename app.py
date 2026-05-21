@@ -2,16 +2,14 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import pydeck as pdk
 
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, recall_score, confusion_matrix
+from sklearn.metrics import accuracy_score, precision_score, recall_score, confusion_matrix
 from sklearn.impute import KNNImputer
 from imblearn.over_sampling import SMOTE
 from xgboost import XGBClassifier
 
-# ==============================
-# PAGE CONFIG
-# ==============================
 st.set_page_config(
     page_title="GRIDTITAN - Transformer Risk Intelligence",
     page_icon="⚡",
@@ -19,22 +17,14 @@ st.set_page_config(
 )
 
 st.title("⚡ GRIDTITAN - Transformer Risk Intelligence System")
-
 st.write(
-    "Data-centric AI prototype for predicting transformer failure risk, "
-    "identifying probable root causes, and generating prioritized maintenance decisions."
+    "Data-centric AI prototype for transformer failure risk prediction, "
+    "root-cause analysis, and priority maintenance planning."
 )
 
-# ==============================
-# TRANSFORMER TYPE SELECTION
-# ==============================
 transformer_type = st.selectbox(
     "Select Transformer Type",
-    [
-        "Distribution Transformer",
-        "Power Transformer",
-        "Pole-Mounted Transformer"
-    ],
+    ["Distribution Transformer", "Power Transformer", "Pole-Mounted Transformer"],
     index=0
 )
 
@@ -43,7 +33,39 @@ st.info(
     "For PS17, the primary focus is distribution transformers used in power distribution networks."
 )
 
-uploaded_file = st.file_uploader("Upload transformer dataset CSV", type=["csv"])
+# ==============================
+# EXPECTED CSV FORMAT + SAMPLE CSV
+# ==============================
+with st.expander("📄 Expected CSV Format"):
+    st.write("Your CSV must contain the following columns:")
+
+    required_df = pd.DataFrame({
+        "Required Columns": [
+            "transformer_id", "load", "temperature",
+            "voltage", "current", "power", "failure"
+        ]
+    })
+
+    st.table(required_df)
+
+    sample_csv = pd.DataFrame({
+        "transformer_id": ["TR-1001", "TR-1002", "TR-1003"],
+        "load": [75, 95, 120],
+        "temperature": [35, 45, 52],
+        "voltage": [230, 238, 248],
+        "current": [40, 58, 75],
+        "power": [9.2, 13.8, 18.6],
+        "failure": [0, 0, 1]
+    })
+
+    st.download_button(
+        label="⬇️ Download Sample CSV Format",
+        data=sample_csv.to_csv(index=False).encode("utf-8"),
+        file_name="sample_transformer_dataset.csv",
+        mime="text/csv"
+    )
+
+uploaded_file = st.file_uploader("Upload Transformer Dataset CSV", type=["csv"])
 
 if uploaded_file is not None:
     data = pd.read_csv(uploaded_file)
@@ -51,34 +73,20 @@ if uploaded_file is not None:
     st.subheader("📌 Dataset Preview")
     st.dataframe(data.head())
 
-    # ==============================
-    # REQUIRED COLUMNS
-    # ==============================
     required_cols = [
-        "transformer_id",
-        "load",
-        "temperature",
-        "voltage",
-        "current",
-        "power",
-        "failure"
+        "transformer_id", "load", "temperature",
+        "voltage", "current", "power", "failure"
     ]
 
     missing_cols = [col for col in required_cols if col not in data.columns]
 
     if missing_cols:
-        st.error(f"CSV is missing required columns: {missing_cols}")
+        st.error(f"CSV missing required columns: {missing_cols}")
         st.stop()
 
-    # ==============================
-    # MISSING VALUE SUMMARY
-    # ==============================
     st.subheader("🔍 Missing Value Summary")
     st.write(data.isnull().sum())
 
-    # ==============================
-    # DATA-CENTRIC MISSING VALUE HANDLING
-    # ==============================
     numeric_cols = ["load", "temperature", "voltage", "current", "power"]
 
     imputer = KNNImputer(n_neighbors=5)
@@ -90,14 +98,9 @@ if uploaded_file is not None:
     data["thermal_stress"] = data["load"] * data["temperature"]
     data["overload"] = (data["load"] > 80).astype(int)
     data["load_ratio"] = data["load"] / 100
-
-    # Voltage deviation from normal reference voltage
     data["voltage_deviation"] = abs(data["voltage"] - 230)
-
-    # Current stress indicator
     data["current_stress"] = data["current"] / (data["voltage"] + 1)
 
-    # Load fluctuation per transformer
     data = data.sort_values(by=["transformer_id"])
     data["load_fluctuation"] = (
         data.groupby("transformer_id")["load"]
@@ -107,76 +110,47 @@ if uploaded_file is not None:
     )
 
     features = [
-        "load",
-        "temperature",
-        "voltage",
-        "current",
-        "power",
-        "thermal_stress",
-        "overload",
-        "load_ratio",
-        "voltage_deviation",
-        "current_stress",
-        "load_fluctuation"
+        "load", "temperature", "voltage", "current", "power",
+        "thermal_stress", "overload", "load_ratio",
+        "voltage_deviation", "current_stress", "load_fluctuation"
     ]
 
     X = data[features]
     y = data["failure"]
 
-    # ==============================
-    # CLASS IMBALANCE HANDLING
-    # ==============================
     smote = SMOTE(random_state=42)
     X_res, y_res = smote.fit_resample(X, y)
 
     st.subheader("⚖️ Class Balance After SMOTE")
     st.write(pd.Series(y_res).value_counts())
 
-    # ==============================
-    # TRAIN TEST SPLIT
-    # ==============================
     X_train, X_test, y_train, y_test = train_test_split(
-        X_res,
-        y_res,
-        test_size=0.2,
-        random_state=42
+        X_res, y_res, test_size=0.2, random_state=42
     )
 
-    # ==============================
-    # MODEL TRAINING
-    # ==============================
-    model = XGBClassifier(
-        eval_metric="logloss",
-        random_state=42
-    )
-
+    model = XGBClassifier(eval_metric="logloss", random_state=42)
     model.fit(X_train, y_train)
 
-    # ==============================
-    # MODEL PREDICTION
-    # ==============================
     y_prob = model.predict_proba(X_test)[:, 1]
 
-    # Recall-focused threshold
     threshold = 0.35
     y_pred = (y_prob >= threshold).astype(int)
 
     accuracy = accuracy_score(y_test, y_pred)
+    precision = precision_score(y_test, y_pred, zero_division=0)
     recall = recall_score(y_test, y_pred)
 
-    # ==============================
-    # MODEL PERFORMANCE
-    # ==============================
     st.subheader("📊 Model Performance")
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     col1.metric("Accuracy", f"{accuracy * 100:.2f}%")
-    col2.metric("Recall", f"{recall * 100:.2f}%")
-    col3.metric("Strategy", "Recall First")
+    col2.metric("Precision", f"{precision * 100:.2f}%")
+    col3.metric("Recall", f"{recall * 100:.2f}%")
+    col4.metric("Strategy", "Recall First")
 
     st.info(
-        "In power systems, missing a failure is more critical than a false alarm. "
-        "Therefore, this prototype prioritizes recall for early failure detection."
+        "In power systems, missing a transformer failure is more critical than a false alarm. "
+        "Therefore, this prototype prioritizes recall while tracking precision to control false alarms."
     )
 
     # ==============================
@@ -192,61 +166,119 @@ if uploaded_file is not None:
         else:
             return "Low"
 
-    data["risk_level"] = data["risk_score"].apply(classify_risk)
+    def risk_badge(level):
+        if level == "High":
+            return "🔴 High Risk"
+        elif level == "Medium":
+            return "🟡 Medium Risk"
+        else:
+            return "🟢 Low Risk"
 
-    # ==============================
-    # ROOT CAUSE IDENTIFICATION
-    # ==============================
+    data["risk_level"] = data["risk_score"].apply(classify_risk)
+    data["risk_status"] = data["risk_level"].apply(risk_badge)
+
     current_stress_threshold = data["current_stress"].quantile(0.75)
     load_fluctuation_threshold = data["load_fluctuation"].quantile(0.75)
 
     def identify_root_cause(row):
         if row["load"] > 85 and row["temperature"] > 40:
-            return "Thermal Overload caused by excessive load and temperature stress"
+            return "Thermal Overload"
         elif row["voltage_deviation"] > 15:
-            return "Voltage Instability caused by abnormal voltage fluctuation"
+            return "Voltage Instability"
         elif row["current_stress"] > current_stress_threshold:
-            return "Electrical Stress caused by high current flow"
+            return "Electrical Stress"
         elif row["load_fluctuation"] > load_fluctuation_threshold:
-            return "Sudden Load Variation caused by irregular demand pattern"
+            return "Sudden Load Variation"
         else:
-            return "General Degradation Risk based on combined operating conditions"
+            return "General Degradation"
 
-    def maintenance_action(level, cause):
+    def maintenance_action(level):
         if level == "High":
-            return f"Immediate inspection required — probable cause: {cause}"
+            return "Immediate inspection required"
         elif level == "Medium":
-            return f"Monitor closely — possible cause: {cause}"
+            return "Monitor closely"
         else:
-            return "Stable condition — continue routine monitoring"
+            return "Routine monitoring"
 
     data["root_cause"] = data.apply(identify_root_cause, axis=1)
-    data["maintenance_action"] = data.apply(
-        lambda row: maintenance_action(row["risk_level"], row["root_cause"]),
-        axis=1
-    )
-
+    data["maintenance_action"] = data["risk_level"].apply(maintenance_action)
     data["transformer_type"] = transformer_type
 
-    # ==============================
-    # PRIORITY MAINTENANCE QUEUE
-    # ==============================
     ranked_data = data.sort_values(by="risk_score", ascending=False)
 
     st.subheader("🚨 Priority Maintenance Queue - Top 5 High-Risk Transformers")
 
     top_5 = ranked_data[
         [
-            "transformer_id",
-            "transformer_type",
-            "risk_score",
-            "risk_level",
-            "root_cause",
-            "maintenance_action"
+            "transformer_id", "transformer_type", "risk_score",
+            "risk_status", "root_cause", "maintenance_action"
         ]
     ].head(5)
 
     st.dataframe(top_5)
+
+    # ==============================
+    # SINGLE TRANSFORMER RISK TESTER
+    # ==============================
+    st.subheader("🧪 Single Transformer Risk Tester")
+
+    left, right = st.columns(2)
+
+    with left:
+        single_transformer_id = st.text_input("Transformer ID", value="TR-1001")
+
+        load = st.slider("Load", 0, 150, 80)
+        temperature = st.slider("Temperature", 0, 100, 35)
+        voltage = st.slider("Voltage", 150, 300, 230)
+        current = st.slider("Current", 0, 120, 40)
+        power = st.slider("Power", 0, 60, 10)
+
+    thermal_stress = load * temperature
+    overload = int(load > 80)
+    load_ratio = load / 100
+    voltage_deviation = abs(voltage - 230)
+    current_stress = current / (voltage + 1)
+    load_fluctuation = abs(load - 70)
+
+    single_input = pd.DataFrame(
+        [[
+            load, temperature, voltage, current, power,
+            thermal_stress, overload, load_ratio,
+            voltage_deviation, current_stress, load_fluctuation
+        ]],
+        columns=features
+    )
+
+    single_prob = model.predict_proba(single_input)[0][1]
+    single_level = classify_risk(single_prob)
+
+    single_row = {
+        "load": load,
+        "temperature": temperature,
+        "voltage_deviation": voltage_deviation,
+        "current_stress": current_stress,
+        "load_fluctuation": load_fluctuation
+    }
+
+    single_root = identify_root_cause(single_row)
+    single_action = maintenance_action(single_level)
+
+    with right:
+        st.write(f"### Transformer ID: {single_transformer_id}")
+        st.metric("Risk Score", f"{single_prob:.2f}")
+
+        if single_level == "Low":
+            st.success("🟢 LOW RISK")
+        elif single_level == "Medium":
+            st.warning("🟡 MEDIUM RISK")
+        else:
+            st.error("🔴 HIGH RISK")
+
+        st.write("### Probable Root Cause")
+        st.write(single_root)
+
+        st.write("### Recommended Action")
+        st.write(single_action)
 
     # ==============================
     # RISK INTELLIGENCE METRICS
@@ -281,12 +313,8 @@ if uploaded_file is not None:
     # ==============================
     csv = ranked_data[
         [
-            "transformer_id",
-            "transformer_type",
-            "risk_score",
-            "risk_level",
-            "root_cause",
-            "maintenance_action"
+            "transformer_id", "transformer_type", "risk_score",
+            "risk_status", "root_cause", "maintenance_action"
         ]
     ].to_csv(index=False).encode("utf-8")
 
@@ -338,6 +366,50 @@ if uploaded_file is not None:
             ax3.text(j, i, cm[i, j], ha="center", va="center")
 
     st.pyplot(fig3)
+
+    # ==============================
+    # COLORED SAMPLE RISK MAP
+    # ==============================
+    st.subheader("🗺️ Sample Transformer Risk Map")
+
+    map_data = ranked_data.head(30).copy()
+
+    np.random.seed(42)
+    map_data["lat"] = 13.0 + np.random.rand(len(map_data)) * 0.3
+    map_data["lon"] = 80.1 + np.random.rand(len(map_data)) * 0.3
+
+    color_map = {
+        "High": [255, 0, 0],
+        "Medium": [255, 200, 0],
+        "Low": [0, 180, 0]
+    }
+
+    map_data["color"] = map_data["risk_level"].map(color_map)
+
+    layer = pdk.Layer(
+        "ScatterplotLayer",
+        data=map_data,
+        get_position="[lon, lat]",
+        get_fill_color="color",
+        get_radius=1200,
+        pickable=True
+    )
+
+    view_state = pdk.ViewState(
+        latitude=13.08,
+        longitude=80.25,
+        zoom=10
+    )
+
+    st.pydeck_chart(
+        pdk.Deck(
+            layers=[layer],
+            initial_view_state=view_state,
+            tooltip={
+                "text": "Transformer: {transformer_id}\nRisk: {risk_level}\nScore: {risk_score}\nCause: {root_cause}"
+            }
+        )
+    )
 
 else:
     st.info("Please upload your transformer dataset CSV file.")
