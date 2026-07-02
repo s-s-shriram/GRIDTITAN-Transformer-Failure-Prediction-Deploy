@@ -283,7 +283,8 @@ GRIDTITAN/
 
 Clone Repository
 
-git clone [https://github.com/your-username/GRIDTITAN.git](https://github.com/s-s-shriram/GRIDTITAN-Transformer-Failure-Prediction.git)
+git clone [https://github.com/s-s-shriram/GRIDTITAN-Transformer-Failure-Prediction.git]
+
 cd GRIDTITAN
 
 Install Dependencies
